@@ -1,40 +1,52 @@
+//
+//  BounceZoomableView.swift
+//  ZoomableView
+//
+//  Created by Татьяна Макеева on 01.12.2025.
+//
+
 import SwiftUI
 
-public struct BounceZoomableView<Content: View>: View {
+public extension View {
+    @ViewBuilder
+    func zoomable(
+        containerSize: CGSize,
+        focusPoint: Binding<CGPoint?> = .constant(nil),
+        minZoomScale: CGFloat = 1,
+        maxZoomScale: CGFloat = 3,
+        doubleTapZoomScale: CGFloat = 2,
+        animationDuration: CGFloat = 0.3,
+        logger: Logger? = nil
+    ) -> some View {
+        modifier(BounceZoomableViewModifier(
+            containerSize: containerSize,
+            focusPoint: focusPoint,
+            minZoomScale: minZoomScale,
+            maxZoomScale: maxZoomScale,
+            doubleTapZoomScale: doubleTapZoomScale,
+            animationDuration: animationDuration,
+            logger: logger
+        ))
+    }
+}
+
+struct BounceZoomableViewModifier: ViewModifier {
     @State private var transform: CGAffineTransform = .identity
     @State private var lastTransform: CGAffineTransform = .identity
     @State private var contentSize: CGSize = .zero
     
     let containerSize: CGSize
     @Binding var focusPoint: CGPoint?
-    let content: () -> Content
 
-    let maxOverdrag: CGFloat = 100
-    let animationDuration = 0.3
-    let doubleTapZoomScale: CGFloat = 2.0
-
-    var minZoom: CGFloat {
-        guard contentSize.width > 0 && contentSize.height > 0 else { return 1.0 }
-        return min(
-            containerSize.width / contentSize.width,
-            containerSize.height / contentSize.height
-        )
-    }
-    let maxZoom: CGFloat = 2
-
-    public init(
-        containerSize: CGSize,
-        focusPoint: Binding<CGPoint?>,
-        content: @escaping () -> Content
-    ) {
-        self.containerSize = containerSize
-        _focusPoint = focusPoint
-        self.content = content
-    }
+    let minZoomScale: CGFloat
+    let maxZoomScale: CGFloat
+    let doubleTapZoomScale: CGFloat
+    let animationDuration: CGFloat
+    let logger: Logger?
     
-    public var body: some View {
-        content()
-            .scaledToFit()
+    func body(content: Content) -> some View {
+        content
+            .aspectRatio(contentMode: .fit)
             .modifier(AnimatableTransformEffect(transform: transform))
             .gesture(dragGesture)
             .modify { view in
@@ -53,24 +65,12 @@ public struct BounceZoomableView<Content: View>: View {
             .frame(width: containerSize.width, height: containerSize.height)
             .clipped()
             .background(Color.clear)
-            .onAppear {
-                if contentSize != .zero {
-                    // Вычисляем начальный масштаб чтобы вписать изображение
-                    let initialScale = min(
-                        containerSize.width / contentSize.width,
-                        containerSize.height / contentSize.height
-                    )
-                    
-                    transform = CGAffineTransform(scaleX: initialScale, y: initialScale)
-                    lastTransform = transform
+            .onChange(of: focusPoint) { newValue in
+                if let point = newValue {
+                    centerOn(point: point)
+                    focusPoint = nil
                 }
             }
-        //            .onChange(of: focusPoint) { newValue in
-        //                if let point = newValue {
-        //                    centerOn(point: point)
-        //                    focusPoint = nil
-        //                }
-        //            }
     }
     
     @available(iOS, introduced: 16.0, deprecated: 17.0)
@@ -79,7 +79,7 @@ public struct BounceZoomableView<Content: View>: View {
             .onChanged { value in
                 let zoomFactor = 0.5
                 let proposedScale = lastTransform.a * value * zoomFactor
-                let clampedScale = min(max(proposedScale, minZoom), maxZoom)
+                let clampedScale = min(max(proposedScale, minZoomScale), maxZoomScale)
                 let scale = clampedScale / lastTransform.a
                 
                 transform = lastTransform.scaledBy(x: scale, y: scale)
@@ -95,14 +95,12 @@ public struct BounceZoomableView<Content: View>: View {
             .onChanged { value in
                 let scaleChange = value.magnification
                 
-                // Масштабируем относительно точки жеста
                 let anchor = value.startAnchor.scaledBy(contentSize)
-                let scaleTransform = CGAffineTransform.anchoredScale(
+                let newTransform = CGAffineTransform.anchoredScale(
                     scale: scaleChange,
-                    anchor: anchor
+                    anchor: anchor,
+                    currentTransform: lastTransform
                 )
-                
-                let newTransform = lastTransform.concatenating(scaleTransform)
                 
                 withAnimation(.interactiveSpring) {
                     transform = newTransform
@@ -110,17 +108,15 @@ public struct BounceZoomableView<Content: View>: View {
             }
             .onEnded { value in
                 let proposedScale = lastTransform.a * value.magnification
-                let clampedScale = min(max(proposedScale, minZoom), maxZoom)
+                let clampedScale = min(max(proposedScale, minZoomScale), maxZoomScale)
                 
-                // ПЕРЕСЧИТЫВАЕМ позицию для нового масштаба чтобы сохранить центр
                 let scaleRatio = clampedScale / lastTransform.a
                 let anchor = value.startAnchor.scaledBy(contentSize)
-                let scaleTransform = CGAffineTransform.anchoredScale(
+                let newTransform = CGAffineTransform.anchoredScale(
                     scale: scaleRatio,
-                    anchor: anchor
+                    anchor: anchor,
+                    currentTransform: lastTransform
                 )
-                
-                let newTransform = lastTransform.concatenating(scaleTransform)
                 
                 withAnimation(.interactiveSpring) {
                     transform = newTransform
@@ -134,17 +130,19 @@ public struct BounceZoomableView<Content: View>: View {
     private var doubleTapGesture: some Gesture {
         SpatialTapGesture(count: 2)
             .onEnded { value in
-                let newTransform: CGAffineTransform =
-                if abs(transform.a - 1.0) > .ulpOfOne {
-                    .anchoredScale(scale: 1.0, anchor: value.location)
-                } else {
-                    .anchoredScale(scale: doubleTapZoomScale, anchor: value.location)
-                }
+                let targetScale: CGFloat = abs(transform.a - 1.0) > .ulpOfOne ? 1.0 : doubleTapZoomScale
+                
+                let newTransform = CGAffineTransform.anchoredScale(
+                    scale: targetScale / transform.a,
+                    anchor: value.location,
+                    currentTransform: transform
+                )
                 
                 withAnimation(.linear(duration: 0.15)) {
                     transform = newTransform
                     lastTransform = newTransform
                 }
+                onEndGesture()
             }
     }
 
@@ -162,45 +160,19 @@ public struct BounceZoomableView<Content: View>: View {
                 onEndGesture()
             }
     }
-    
-    private func debugCenters() {
-        let scale = transform.a
-        let contentCenter = CGPoint(x: contentSize.width / 2, y: contentSize.height / 2)
-        let containerCenter = CGPoint(x: containerSize.width / 2, y: containerSize.height / 2)
-        
-        // Правильное центрирование: центр контента должен совпадать с центром контейнера
-        let expectedTx = containerCenter.x - contentCenter.x * scale
-        let expectedTy = containerCenter.y - contentCenter.y * scale
-        
-        let limits = offsetLimits(for: scale)
-        
-        print("=== DEBUG CENTERS ===")
-        print("Контейнер: центр в (\(containerCenter.x), \(containerCenter.y))")
-        print("Контент: центр в (\(contentCenter.x), \(contentCenter.y))")
-        print("Масштаб: \(scale)")
-        print("Текущая трансформация: tx=\(transform.tx), ty=\(transform.ty)")
-        print("Ожидаемая для центрирования: tx=\(expectedTx), ty=\(expectedTy)")
-        print("Ограничения: X=\(limits.minX)...\(limits.maxX), Y=\(limits.minY)...\(limits.maxY)")
-        
-        // Проверяем, совпадает ли текущая позиция с центрированной
-        let isCenteredX = abs(transform.tx - expectedTx) < 0.1
-        let isCenteredY = abs(transform.ty - expectedTy) < 0.1
-        print("По центру по X: \(isCenteredX), по Y: \(isCenteredY)")
-        print("=====================")
-    }
 
     // Вызывайте эту функцию в onEndGesture или где нужно
     
     private func onEndGesture() {
-        debugCenters()
-        print("🛑 onEndGesture — before clamping")
-        print("transform (before): \(transform)")
+        logger?.debug("content: \(contentSize) container: \(containerSize)")
+        logger?.debug("🛑 onEndGesture — before clamping")
+        logger?.debug("transform (before): \(transform)")
         
         // Только ограничиваем позицию, масштаб уже ограничен в жестах
         let newTransform = limitedTransform(transform)
         
-        print("🟢 onEndGesture — after clamping")
-        print("transform (after): \(newTransform)")
+        logger?.debug("🟢 onEndGesture — after clamping")
+        logger?.debug("transform (after): \(newTransform)")
         
         withAnimation(.easeOut(duration: animationDuration)) {
             transform = newTransform
@@ -225,76 +197,80 @@ public struct BounceZoomableView<Content: View>: View {
 
     private func limitedTransform(_ proposed: CGAffineTransform) -> CGAffineTransform {
         let scale = proposed.a
-        
-        // Получаем ограничения для текущего масштаба
         let limits = offsetLimits(for: scale)
         
-        print("limitedTransform - current tx: \(proposed.tx), ty: \(proposed.ty)")
-        print("limitedTransform - limits: X(\(limits.minX)...\(limits.maxX)), Y(\(limits.minY)...\(limits.maxY))")
+        // Применяем лимиты к трансляции
+        var tx = proposed.tx
+        var ty = proposed.ty
         
-        let tx: CGFloat
-        let ty: CGFloat
-        
-        // Ограничиваем по X
-        if limits.minX == limits.maxX {
-            // Фиксируем по центру по X
+        // Если minX == maxX (центрирование), фиксируем позицию
+        if abs(limits.minX - limits.maxX) < .ulpOfOne {
             tx = limits.minX
-            print("limitedTransform - fixed X to center: \(tx)")
         } else {
-            // Ограничиваем прокрутку по X
             tx = min(max(proposed.tx, limits.minX), limits.maxX)
-            print("limitedTransform - clamped X: \(proposed.tx) -> \(tx)")
         }
         
-        // Ограничиваем по Y
-        if limits.minY == limits.maxY {
-            // Фиксируем по центру по Y
+        // Если minY == maxY (центрирование), фиксируем позицию
+        if abs(limits.minY - limits.maxY) < .ulpOfOne {
             ty = limits.minY
-            print("limitedTransform - fixed Y to center: \(ty)")
         } else {
-            // Ограничиваем прокрутку по Y
             ty = min(max(proposed.ty, limits.minY), limits.maxY)
-            print("limitedTransform - clamped Y: \(proposed.ty) -> \(ty)")
         }
         
-        let result = CGAffineTransform(
+        // Создаем новый трансформ с теми же масштабами и поворотом, но ограниченной трансляцией
+        return CGAffineTransform(
             a: proposed.a, b: proposed.b,
             c: proposed.c, d: proposed.d,
             tx: tx, ty: ty
         )
-        
-        print("limitedTransform - result: tx=\(tx), ty=\(ty)")
-        return result
     }
     
     private func offsetLimits(for scale: CGFloat) -> (minX: CGFloat, maxX: CGFloat, minY: CGFloat, maxY: CGFloat) {
         let scaledWidth = contentSize.width * scale
         let scaledHeight = contentSize.height * scale
         
-        // Вычисляем сколько "лишнего" пространства за границами контейнера
-        let horizontalSpace = containerSize.width - scaledWidth
-        let verticalSpace = containerSize.height - scaledHeight
+        logger?.debug("=== offsetLimits Debug ===")
+        logger?.debug("contentSize: \(contentSize)")
+        logger?.debug("containerSize: \(containerSize)")
+        logger?.debug("scale: \(scale)")
         
-        print("offsetLimits - scale: \(scale), scaled: \(scaledWidth)x\(scaledHeight)")
-        print("offsetLimits - container: \(containerSize), spaces: h=\(horizontalSpace), v=\(verticalSpace)")
+        let minX: CGFloat
+        let maxX: CGFloat
+        let minY: CGFloat
+        let maxY: CGFloat
         
-        if horizontalSpace >= 0 && verticalSpace >= 0 {
-            // Изображение меньше контейнера по обоим осям - фиксируем по центру
-            print("offsetLimits - full centering mode")
-            return (0, 0, 0, 0)
-        } else if horizontalSpace >= 0 {
-            // Изображение меньше только по ширине - фиксируем по X, разрешаем прокрутку по Y
-            print("offsetLimits - width centering mode")
-            return (0, 0, verticalSpace, 0)
-        } else if verticalSpace >= 0 {
-            // Изображение меньше только по высоте - фиксируем по Y, разрешаем прокрутку по X
-            print("offsetLimits - height centering mode")
-            return (horizontalSpace, 0, 0, 0)
+        let initialOffsetX = (containerSize.width - contentSize.width) / 2
+        // По горизонтали
+        if scaledWidth <= containerSize.width {
+            // Центрируем
+            let allowance = (containerSize.width - scaledWidth) / 2
+            minX = allowance - initialOffsetX
+            maxX = allowance - initialOffsetX
+            logger?.debug("Horizontal: Centering, allowance = \(allowance)")
         } else {
-            // Изображение больше контейнера по обоим осям - разрешаем прокрутку
-            print("offsetLimits - scroll mode")
-            return (horizontalSpace, 0, verticalSpace, 0)
+            minX = containerSize.width - scaledWidth - initialOffsetX // самое правое положение
+            maxX = -initialOffsetX  // сохранение относительного положения от центра
+            logger?.debug("Horizontal: Constraining with initial offset, minX = \(minX), maxX = \(maxX)")
         }
+        
+        let initialOffsetY = (containerSize.height - contentSize.height) / 2
+        // По вертикали
+        if scaledHeight <= containerSize.height {
+            // Центрируем
+            let allowance = (containerSize.height - scaledHeight) / 2
+            minY = allowance - initialOffsetY
+            maxY = allowance - initialOffsetY
+            logger?.debug("Vertical: Centering, allowance = \(allowance)")
+        } else {
+            minY = containerSize.height - scaledHeight - initialOffsetY  // самое нижнее положение
+            maxY = -initialOffsetY  // сохранение относительного положения от центра
+            logger?.debug("Vertical: Constraining with initial offset, minY = \(minY), maxY = \(maxY)")
+        }
+        
+        logger?.debug("Result: minX=\(minX), maxX=\(maxX), minY=\(minY), maxY=\(maxY)")
+        logger?.debug("=== End Debug ===")
+        
+        return (minX, maxX, minY, maxY)
     }
 }
 
@@ -321,6 +297,20 @@ extension UnitPoint {
 }
 
 extension CGAffineTransform {
+    fileprivate static func anchoredScale(scale: CGFloat, anchor: CGPoint, currentTransform: CGAffineTransform) -> CGAffineTransform {
+        // Точка привязки в координатах контента
+        let anchorInContent = CGPoint(
+            x: (anchor.x - currentTransform.tx) / currentTransform.a,
+            y: (anchor.y - currentTransform.ty) / currentTransform.d
+        )
+        
+        // Создаем трансформ масштабирования относительно этой точки
+        return CGAffineTransform(translationX: anchorInContent.x, y: anchorInContent.y)
+            .scaledBy(x: scale, y: scale)
+            .translatedBy(x: -anchorInContent.x, y: -anchorInContent.y)
+            .concatenating(currentTransform)
+    }
+    
     fileprivate static func anchoredScale(scale: CGFloat, anchor: CGPoint) -> CGAffineTransform {
         CGAffineTransform(translationX: anchor.x, y: anchor.y)
             .scaledBy(x: scale, y: scale)

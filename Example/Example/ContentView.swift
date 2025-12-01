@@ -11,16 +11,23 @@ import ZoomableView
 struct ContentView: View {
     var body: some View {
         GeometryReader { proxy in
-            BounceZoomableView(
-                containerSize: proxy.size,
-                focusPoint: .constant(nil)
-            ) {
-                Image(.zebra)
-                    .resizable()
-                    .border(.blue)
-            }
+            Image(.images)
+            //            Image(.zebra)
+                .resizable()
+                .border(.blue)
+                .zoomable(
+                    containerSize: proxy.size,
+                    logger: ConsoleLogger()
+                )
         }
         .border(.red)
+    }
+}
+
+
+struct ConsoleLogger: Logger {
+    func log(_ message: String, level: ZoomableView.LogLevel, file: String, function: String, line: Int) {
+        print(message)
     }
 }
 
