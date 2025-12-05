@@ -35,6 +35,9 @@ struct BounceZoomableViewModifier: ViewModifier {
     @State private var lastTransform: CGAffineTransform = .identity
     @State private var contentSize: CGSize = .zero
     
+    @State private var didHapticForScale = false
+    @State private var didDoubleTap = false
+    
     let containerSize: CGSize
     @Binding var focusPoint: CGPoint?
 
@@ -71,8 +74,15 @@ struct BounceZoomableViewModifier: ViewModifier {
                     focusPoint = nil
                 }
             }
+            .modify { view in
+                if #available(iOS 17.0, *) {
+                    view
+                        .sensoryFeedback(.impact(flexibility: .soft), trigger: didHapticForScale)
+                        .sensoryFeedback(.selection, trigger: didDoubleTap)
+                } else { view }
+            }
     }
-    
+                
     @available(iOS, introduced: 16.0, deprecated: 17.0)
     private var oldMagnificationGesture: some Gesture {
         MagnificationGesture()
@@ -94,22 +104,34 @@ struct BounceZoomableViewModifier: ViewModifier {
         MagnifyGesture(minimumScaleDelta: 0)
             .onChanged { value in
                 let scaleChange = value.magnification
-                
+                let proposedScale = lastTransform.a * scaleChange
+                let clampedScale = min(max(proposedScale, minZoomScale), maxZoomScale)
+
+                if proposedScale != clampedScale {
+                    if didHapticForScale == false {
+                        didHapticForScale = true
+                    }
+                } else {
+                    didHapticForScale = false
+                }
+
                 let anchor = value.startAnchor.scaledBy(contentSize)
                 let newTransform = CGAffineTransform.anchoredScale(
                     scale: scaleChange,
                     anchor: anchor,
                     currentTransform: lastTransform
                 )
-                
+
                 withAnimation(.interactiveSpring) {
                     transform = newTransform
                 }
             }
             .onEnded { value in
+                didHapticForScale = false
+
                 let proposedScale = lastTransform.a * value.magnification
                 let clampedScale = min(max(proposedScale, minZoomScale), maxZoomScale)
-                
+
                 let scaleRatio = clampedScale / lastTransform.a
                 let anchor = value.startAnchor.scaledBy(contentSize)
                 let newTransform = CGAffineTransform.anchoredScale(
@@ -117,12 +139,12 @@ struct BounceZoomableViewModifier: ViewModifier {
                     anchor: anchor,
                     currentTransform: lastTransform
                 )
-                
+
                 withAnimation(.interactiveSpring) {
                     transform = newTransform
-                    lastTransform = transform
+                    lastTransform = newTransform
                 }
-                
+
                 onEndGesture()
             }
     }
@@ -130,6 +152,7 @@ struct BounceZoomableViewModifier: ViewModifier {
     private var doubleTapGesture: some Gesture {
         SpatialTapGesture(count: 2)
             .onEnded { value in
+                didDoubleTap = true
                 let targetScale: CGFloat = abs(transform.a - 1.0) > .ulpOfOne ? 1.0 : doubleTapZoomScale
                 
                 let newTransform = CGAffineTransform.anchoredScale(
@@ -138,9 +161,10 @@ struct BounceZoomableViewModifier: ViewModifier {
                     currentTransform: transform
                 )
                 
-                withAnimation(.linear(duration: 0.15)) {
+                withAnimation(.linear(duration: animationDuration)) {
                     transform = newTransform
                     lastTransform = newTransform
+                    didDoubleTap = false
                 }
                 onEndGesture()
             }
