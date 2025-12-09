@@ -184,15 +184,12 @@ struct BounceZoomableViewModifier: ViewModifier {
                 onEndGesture()
             }
     }
-
-    // Вызывайте эту функцию в onEndGesture или где нужно
     
     private func onEndGesture() {
         logger?.debug("content: \(contentSize) container: \(containerSize)")
         logger?.debug("🛑 onEndGesture — before clamping")
         logger?.debug("transform (before): \(transform)")
         
-        // Только ограничиваем позицию, масштаб уже ограничен в жестах
         let newTransform = limitedTransform(transform)
         
         logger?.debug("🟢 onEndGesture — after clamping")
@@ -221,25 +218,21 @@ struct BounceZoomableViewModifier: ViewModifier {
         let scale = proposed.a
         let limits = offsetLimits(for: scale)
         
-        // Применяем лимиты к трансляции
         var tx = proposed.tx
         var ty = proposed.ty
         
-        // Если minX == maxX (центрирование), фиксируем позицию
         if abs(limits.minX - limits.maxX) < .ulpOfOne {
             tx = limits.minX
         } else {
             tx = min(max(proposed.tx, limits.minX), limits.maxX)
         }
         
-        // Если minY == maxY (центрирование), фиксируем позицию
         if abs(limits.minY - limits.maxY) < .ulpOfOne {
             ty = limits.minY
         } else {
             ty = min(max(proposed.ty, limits.minY), limits.maxY)
         }
         
-        // Создаем новый трансформ с теми же масштабами и поворотом, но ограниченной трансляцией
         return CGAffineTransform(
             a: proposed.a, b: proposed.b,
             c: proposed.c, d: proposed.d,
@@ -262,30 +255,26 @@ struct BounceZoomableViewModifier: ViewModifier {
         let maxY: CGFloat
         
         let initialOffsetX = (containerSize.width - contentSize.width) / 2
-        // По горизонтали
         if scaledWidth <= containerSize.width {
-            // Центрируем
             let allowance = (containerSize.width - scaledWidth) / 2
             minX = allowance - initialOffsetX
             maxX = allowance - initialOffsetX
             logger?.debug("Horizontal: Centering, allowance = \(allowance)")
         } else {
-            minX = containerSize.width - scaledWidth - initialOffsetX // самое правое положение
-            maxX = -initialOffsetX  // сохранение относительного положения от центра
+            minX = containerSize.width - scaledWidth - initialOffsetX
+            maxX = -initialOffsetX
             logger?.debug("Horizontal: Constraining with initial offset, minX = \(minX), maxX = \(maxX)")
         }
         
         let initialOffsetY = (containerSize.height - contentSize.height) / 2
-        // По вертикали
         if scaledHeight <= containerSize.height {
-            // Центрируем
             let allowance = (containerSize.height - scaledHeight) / 2
             minY = allowance - initialOffsetY
             maxY = allowance - initialOffsetY
             logger?.debug("Vertical: Centering, allowance = \(allowance)")
         } else {
-            minY = containerSize.height - scaledHeight - initialOffsetY  // самое нижнее положение
-            maxY = -initialOffsetY  // сохранение относительного положения от центра
+            minY = containerSize.height - scaledHeight - initialOffsetY
+            maxY = -initialOffsetY 
             logger?.debug("Vertical: Constraining with initial offset, minY = \(minY), maxY = \(maxY)")
         }
         
