@@ -206,14 +206,12 @@ struct BounceZoomableViewModifier: ViewModifier {
 
     private func centerOn(point: CGPoint) {
         let containerCenter = containerSize.center
-        let scale = transform.a
-        let contentOrigin = CGPoint(x: containerCenter.x - contentSize.width * scale / 2, y: containerCenter.y - contentSize.height * scale / 2)
-        let pointInView = CGPoint(x: contentOrigin.x + point.x * scale, y: contentOrigin.y + point.y * scale)
+        let contentOrigin = CGPoint(x: containerCenter.x - contentSize.width / 2, y: containerCenter.y - contentSize.height / 2)
+        let pointInView = CGPoint(x: contentOrigin.x + point.x, y: contentOrigin.y + point.y)
         let proposedOffset = CGSize(width: containerCenter.x - pointInView.x, height: containerCenter.y - pointInView.y)
+        let newTransform = CGAffineTransform(translationX: proposedOffset.width, y: proposedOffset.height)
         
         withAnimation(.easeInOut) {
-            let newTransform = CGAffineTransform(translationX: proposedOffset.width, y: proposedOffset.height)
-                .scaledBy(x: scale, y: scale)
             transform = limitedTransform(newTransform)
             lastTransform = transform
         }

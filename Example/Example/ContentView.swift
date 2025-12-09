@@ -24,7 +24,6 @@ struct ContentView: View {
     }
 }
 
-
 struct ConsoleLogger: Logger {
     func log(_ message: String, level: ZoomableView.LogLevel, file: String, function: String, line: Int) {
         print(message)
