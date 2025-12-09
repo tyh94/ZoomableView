@@ -274,7 +274,7 @@ struct BounceZoomableViewModifier: ViewModifier {
             logger?.debug("Vertical: Centering, allowance = \(allowance)")
         } else {
             minY = containerSize.height - scaledHeight - initialOffsetY
-            maxY = -initialOffsetY 
+            maxY = -initialOffsetY
             logger?.debug("Vertical: Constraining with initial offset, minY = \(minY), maxY = \(maxY)")
         }
         
